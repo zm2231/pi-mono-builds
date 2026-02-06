@@ -82,12 +82,36 @@ jobs:
         shell: bash
         run: |
           QEMU_PREFIX=$(brew --prefix qemu)
-          mkdir -p dist/qemu-assets/${{ matrix.os }}/qemu
-          cp -R "$QEMU_PREFIX"/bin dist/qemu-assets/${{ matrix.os }}/qemu/
-          if [ -d "$QEMU_PREFIX"/share/qemu ]; then
-            mkdir -p dist/qemu-assets/${{ matrix.os }}/qemu/share
-            cp -R "$QEMU_PREFIX"/share/qemu/* dist/qemu-assets/${{ matrix.os }}/qemu/share/
+          BUNDLE_DIR=dist/qemu-assets/${{ matrix.os }}/qemu
+          mkdir -p "$BUNDLE_DIR"
+          cp -R "$QEMU_PREFIX"/bin "$BUNDLE_DIR"/
+          mkdir -p "$BUNDLE_DIR"/lib
+          if [ -d "$QEMU_PREFIX"/lib ]; then
+            cp -R "$QEMU_PREFIX"/lib/* "$BUNDLE_DIR"/lib/
           fi
+          for dep in $(brew deps --include-build qemu); do
+            dep_prefix=$(brew --prefix "$dep")
+            if [ -d "$dep_prefix"/lib ]; then
+              cp -R "$dep_prefix"/lib/* "$BUNDLE_DIR"/lib/
+            fi
+          done
+          if [ -d "$QEMU_PREFIX"/share/qemu ]; then
+            mkdir -p "$BUNDLE_DIR"/share
+            cp -R "$QEMU_PREFIX"/share/qemu/* "$BUNDLE_DIR"/share/
+          fi
+          for bin in "$BUNDLE_DIR"/bin/qemu-system-*; do
+            [ -f "$bin" ] || continue
+            bin_name=$(basename "$bin")
+            mv "$bin" "$BUNDLE_DIR"/bin/${bin_name}.bin
+            printf '%s\n' '#!/bin/sh' \
+              'SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)' \
+              'QEMU_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)' \
+              'export DYLD_LIBRARY_PATH="$QEMU_ROOT/lib:${DYLD_LIBRARY_PATH:-}"' \
+              'export DYLD_FALLBACK_LIBRARY_PATH="$QEMU_ROOT/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"' \
+              "exec \"\$SCRIPT_DIR/${bin_name}.bin\" \"\$@\"" \
+              > "$BUNDLE_DIR"/bin/${bin_name}
+            chmod +x "$BUNDLE_DIR"/bin/${bin_name}
+          done
 
       - name: Bundle QEMU (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
