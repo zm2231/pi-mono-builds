@@ -102,8 +102,7 @@ jobs:
         if: ${{ matrix.os != 'windows-latest' }}
         shell: bash
         run: |
-          cd dist/qemu-assets/${{ matrix.os }}
-          tar -czf ../mom-qemu-${{ matrix.os }}.tar.gz .
+          tar -czf dist/mom-qemu-${{ matrix.os }}.tar.gz -C dist/qemu-assets/${{ matrix.os }} .
 
       - name: Archive assets (Windows)
         if: ${{ matrix.os == 'windows-latest' }}
