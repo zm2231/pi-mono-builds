@@ -1,0 +1,120 @@
+name: mom-qemu-assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: "QEMU guest image URL (qcow2)"
+        required: true
+      image_sha256:
+        description: "Optional SHA256 checksum for the guest image"
+        required: false
+      arch:
+        description: "Guest architecture (x86_64 or aarch64)"
+        required: false
+        default: "x86_64"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare output
+        shell: bash
+        run: |
+          mkdir -p dist/qemu-assets/${{ matrix.os }}
+
+      - name: Download guest image
+        if: ${{ matrix.os != 'windows-latest' }}
+        shell: bash
+        run: |
+          curl -L "${{ inputs.image_url }}" -o dist/qemu-assets/${{ matrix.os }}/mom.qcow2
+          if [ -n "${{ inputs.image_sha256 }}" ]; then
+            echo "${{ inputs.image_sha256 }}  dist/qemu-assets/${{ matrix.os }}/mom.qcow2" | shasum -a 256 -c -
+          fi
+
+      - name: Download guest image (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ inputs.image_url }}" -OutFile "dist/qemu-assets/${{ matrix.os }}/mom.qcow2"
+          if ("${{ inputs.image_sha256 }}" -ne "") {
+            $hash = (Get-FileHash "dist/qemu-assets/${{ matrix.os }}/mom.qcow2" -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne "${{ inputs.image_sha256 }}".ToLower()) {
+              throw "Checksum mismatch: expected ${{ inputs.image_sha256 }}, got $hash"
+            }
+          }
+
+      - name: Install QEMU (Ubuntu)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-system-arm qemu-utils
+
+      - name: Install QEMU (macOS)
+        if: ${{ matrix.os == 'macos-latest' }}
+        shell: bash
+        run: |
+          brew update
+          brew install qemu
+
+      - name: Install QEMU (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          choco install qemu -y
+
+      - name: Bundle QEMU (Ubuntu)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
+        run: |
+          mkdir -p dist/qemu-assets/${{ matrix.os }}/qemu/bin dist/qemu-assets/${{ matrix.os }}/qemu/share
+          cp /usr/bin/qemu-system-* dist/qemu-assets/${{ matrix.os }}/qemu/bin/
+          if [ -d /usr/share/qemu ]; then cp -R /usr/share/qemu/* dist/qemu-assets/${{ matrix.os }}/qemu/share/; fi
+
+      - name: Bundle QEMU (macOS)
+        if: ${{ matrix.os == 'macos-latest' }}
+        shell: bash
+        run: |
+          QEMU_PREFIX=$(brew --prefix qemu)
+          mkdir -p dist/qemu-assets/${{ matrix.os }}/qemu
+          cp -R "$QEMU_PREFIX"/bin dist/qemu-assets/${{ matrix.os }}/qemu/
+          if [ -d "$QEMU_PREFIX"/share/qemu ]; then
+            mkdir -p dist/qemu-assets/${{ matrix.os }}/qemu/share
+            cp -R "$QEMU_PREFIX"/share/qemu/* dist/qemu-assets/${{ matrix.os }}/qemu/share/
+          fi
+
+      - name: Bundle QEMU (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $qemuPath = "C:\Program Files\qemu"
+          if (!(Test-Path $qemuPath)) { throw "QEMU not found at $qemuPath" }
+          New-Item -ItemType Directory -Force -Path "dist/qemu-assets/${{ matrix.os }}/qemu" | Out-Null
+          Copy-Item -Recurse -Force "$qemuPath\*" "dist/qemu-assets/${{ matrix.os }}/qemu/"
+
+      - name: Archive assets (Unix)
+        if: ${{ matrix.os != 'windows-latest' }}
+        shell: bash
+        run: |
+          cd dist/qemu-assets/${{ matrix.os }}
+          tar -czf ../mom-qemu-${{ matrix.os }}.tar.gz .
+
+      - name: Archive assets (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/qemu-assets/${{ matrix.os }}\*" -DestinationPath "dist\mom-qemu-${{ matrix.os }}.zip"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mom-qemu-${{ matrix.os }}
+          path: |
+            dist/mom-qemu-${{ matrix.os }}.tar.gz
+            dist/mom-qemu-${{ matrix.os }}.zip
